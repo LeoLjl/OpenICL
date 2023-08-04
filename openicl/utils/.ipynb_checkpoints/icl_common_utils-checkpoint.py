@@ -6,8 +6,7 @@ from accelerate import Accelerator
 
 
 def get_dataloader(datalist: List[List], batch_size: int) -> DataLoader:
-    import pdb; pdb.set_trace()
-    dataloader = DataLoader(datalist, batch_size=batch_size, pin_memory=True)
+    dataloader = DataLoader(datalist, batch_size=batch_size, num_workers=6, pin_memory=True)
     return dataloader
 
 
