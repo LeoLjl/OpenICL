@@ -8,6 +8,8 @@ from tqdm.auto import tqdm
 from torch.utils.data import Dataset
 import evaluate
 from datasets import load_dataset
+import yaml
+import numpy as np
 
 class ListDataset(Dataset):
      def __init__(self, original_list):
@@ -82,8 +84,30 @@ def inference1(model_name, prompts):
         outputs.append(s)
     return outputs
 
+def rerank(ids):
+    
+    # this reranks the example order
+    ice_num = ids.shape[-1]
+    
+    i, j = 0, ice_num - 1
+    counter = 0
+    permutation = np.zeros(ice_num).astype(int)
+    
+    while i < j:
+        permutation[i] = counter
+        counter += 1
+        permutation[j] = counter
+        counter += 1
+        i += 1
+        j -= 1
+    if i == j:
+        permutation[i] = counter
+    permutation = np.arange(ice_num)[::-1]
+    print("rerank permutation: ", permutation)
+    ids = ids[:, permutation]
+    return ids
 
-def inference(model_name, prompts, labels, batch_size=8):
+def inference(model_name, prompts, batch_size=8):
     device = "cuda"
     
     tokenizer = AutoTokenizer.from_pretrained(model_name)
@@ -94,10 +118,11 @@ def inference(model_name, prompts, labels, batch_size=8):
     model = AutoModelForCausalLM.from_pretrained(model_name).to(device)
     
     labels = []
-    num_batches = len(prompts) // batch_size
+    print("len prompts: ", len(prompts))
+    num_batches = len(prompts) // batch_size if len(prompts) % batch_size == 0 else len(prompts) // batch_size + 1
+    
     for i in tqdm(range(num_batches)):
         batch = prompts[i*batch_size: (i+1)*batch_size]
-        batch_labels = labels[i*batch_size: (i+1)*batch_size]
         
         tokens = tokenizer(batch, return_tensors='pt', padding=True)
         input_ids = tokens["input_ids"].to(device)
@@ -109,7 +134,6 @@ def inference(model_name, prompts, labels, batch_size=8):
         
         pred = list(output[:, length])
         label = [tokenizer.decode(p, skip_special_tokens=True) for p in pred]
-        # import pdb;pdb.set_trace()
         labels.extend(label)
     return labels
         
@@ -131,27 +155,34 @@ def inference(model_name, prompts, labels, batch_size=8):
     
     # output = model(**input_ids)
 
+def reverse_dict(d):
+    return {v: k for k, v in d.items()}
 
 if __name__ == "__main__":
+    with open("config.yaml", "r") as f:
+        config = yaml.load(f, Loader=yaml.FullLoader)
+        print(config)
 
     # Loading dataset from huggingface
-    dataset = load_dataset('gpt3mix/sst2')
+    dataset = load_dataset(config["dataset"])
     train_corpus = dataset["train"]["text"]
-    test_corpus = dataset["test"]["text"]
+    test_corpus = dataset[config["split"]]["text"]
     train_embeddings = get_embeddings(train_corpus)
     index = create_index(train_embeddings)
-    neighbours = knn_search(index, test_corpus)
+    neighbours = knn_search(index, test_corpus, config["ice_num"])
+    neighbours = rerank(neighbours)
     
-    template = "Review:{text}\nSentiment:{verb}"
-    label_map = {0: "positive", 1: "negative"}
-    map_label = {"positive": 0, "negative": 1}
-    prompts = generate_prompts(template, dataset, neighbours, label_map)
-    print(prompts[:10])
-    predictions = inference("gpt2-xl", prompts, dataset["test"]["label"])
+    template = "Movie Review:{text}\nSentiment:{verb}"
+    label_map = config["label_map"]
+    map_label = reverse_dict(label_map)
+    prompts = generate_prompts(template, dataset, neighbours, label_map, config["split"], config["input_column"], config["output_column"])
     
     import pickle
     with open("icl_out.bin", "wb") as f:
-        pickle.dump(predictions, f)
+        pickle.dump(neighbours, f)
+    predictions = inference(config["model"], prompts)  
+    
+    
     pred = list(map(lambda x: map_label[x], predictions))
-    test_labels = dataset["test"]["label"]
+    test_labels = dataset[config["split"]][config["output_column"]]
     print(evaluate_result(pred, test_labels))
