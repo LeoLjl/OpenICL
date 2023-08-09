@@ -116,6 +116,7 @@ def rerank(ids, similarity):
         neighbour = ids[i]
         sim = similarity[i][neighbour]
         index = np.argsort(sim) # 升序排列
+        index = index[::-1]
         order[i] = neighbour[index]
         # order[i] = index
     return order
@@ -151,8 +152,6 @@ def inference(model_name, prompts, batch_size=8):
     torch.cuda.empty_cache()
     return labels
         
-
-    
     # for prompt in prompts:
     #     input_ids = tokenizer.encode(prompt, return_tensors='pt').to(device)
     #     output = model.generate(input_ids, max_new_tokens=1)
@@ -171,8 +170,10 @@ def inference(model_name, prompts, batch_size=8):
 
 def random_neighbours(train, test, ice_num=8):
     neighbours = np.zeros((test, ice_num), dtype=int)
+    
+    fudge = np.random.choice(train, ice_num, replace=False)
     for i in range(test):
-        neighbours[i] = np.random.choice(train, ice_num, replace=False)
+        neighbours[i] = fudge
     return neighbours
 
 def perm(ids):
@@ -235,9 +236,11 @@ if __name__ == "__main__":
     train_embeddings = get_embeddings(train_corpus)
     test_embeddings = get_embeddings(test_corpus)
     sim = cosine_similarity(train_embeddings, test_embeddings).T
+    print("similarity matrix shape: ", sim.shape)
     
     neighbours = random_neighbours(len(train_corpus), len(test_corpus), config["ice_num"])
-    neighbours = rerank(neighbours, sim)
+    # neighbours = rerank(neighbours, sim)
+    # neighbours = perm(neighbours)    
     
     template = "Movie Review:{text}\nSentiment:{verb}"
     label_map = config["label_map"]
