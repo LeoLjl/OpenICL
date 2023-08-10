@@ -173,7 +173,7 @@ def random_neighbours(train, test, ice_num=8):
     
     fudge = np.random.choice(train, ice_num, replace=False)
     for i in range(test):
-        neighbours[i] = fudge
+        neighbours[i] = np.random.choice(train, ice_num, replace=False)
     return neighbours
 
 def perm(ids):
