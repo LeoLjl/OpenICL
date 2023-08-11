@@ -1,5 +1,5 @@
 model: "gpt2-xl"
-batch_size: 1
+batch_size: 8
 dataset: "gpt3mix/sst2"
 ice_num: 8
 split: "test"

@@ -1,4 +1,4 @@
-# 不共享ice，随机样本作为ice
+# 共享ice，随机ice
 
 from sentence_transformers import SentenceTransformer
 from transformers import AutoTokenizer, GPT2Tokenizer, AutoModelForCausalLM, GPT2Model
@@ -50,13 +50,13 @@ def generate_item(template, dataset, ice_id, label_map: Dict, input_column="text
     return prompt
     
 
-def generate_prompts(template, dataset: Dict, ice_ids, label_map: Dict, split="test", input_column="text", label_column="label"):
+def generate_prompts(template, dataset: Dict, ice_ids, test_num, label_map: Dict, split="test", input_column="text", label_column="label"):
     prompts = []
+    tp = "\n".join([generate_item(template, dataset["train"], i, label_map, input_column, label_column) for i in ice_ids]) + "\n"
     
     # construct a prompt for every test data point
-    for idx, neighbours in enumerate(tqdm(ice_ids)):
-        prompt = "\n".join([generate_item(template, dataset["train"], i, label_map, input_column, label_column) for i in neighbours]) + "\n"
-        prompt += template.format(text=dataset[split][input_column][idx], verb="")
+    for idx in range(test_num):        
+        prompt = tp + template.format(text=dataset[split][input_column][idx], verb="")
         prompts.append(prompt)
     
     return prompts
@@ -111,27 +111,14 @@ def inference1(model_name, prompts):
 #     ids = ids[:, permutation]
 #     return ids
 
-def rerank(ids, similarity):
-    order = np.zeros_like(ids)
+def get_ppl(model, neighbours):
+    # get the perplexity of each prompt
     
-    for i in range(ids.shape[0]):
-        neighbour = ids[i]
-        sim = similarity[i][neighbour]
-        index = np.argsort(sim) # 升序排列
-        index = index[::-1]
-        order[i] = neighbour[index]
-        # order[i] = index
-    return order
+    
+    pass
 
-def inference(model_name, prompts, batch_size=8):
+def inference(model, tokenizer, prompts, batch_size=8):
     device = "cuda"
-    
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    tokenizer.pad_token = tokenizer.eos_token
-    tokenizer.pad_token_id = tokenizer.eos_token_id
-    tokenizer.padding_side = "left"
-    
-    model = AutoModelForCausalLM.from_pretrained(model_name).to(device)
     
     labels = []
     print("len prompts: ", len(prompts))
@@ -151,7 +138,7 @@ def inference(model_name, prompts, batch_size=8):
         pred = list(output[:, length])
         label = [tokenizer.decode(p, skip_special_tokens=True) for p in pred]
         labels.extend(label)
-    torch.cuda.empty_cache()
+    
     return labels
         
     # for prompt in prompts:
@@ -170,13 +157,9 @@ def inference(model_name, prompts, batch_size=8):
     
     # output = model(**input_ids)
 
-def random_neighbours(train, test, ice_num=8):
-    neighbours = np.zeros((test, ice_num), dtype=int)
-    
+def random_neighbours(train, ice_num=8):
     fudge = np.random.choice(train, ice_num, replace=False)
-    for i in range(test):
-        neighbours[i] = np.random.choice(train, ice_num, replace=False)
-    return neighbours
+    return fudge
 
 def perm(ids):
     # this reranks the example order
@@ -235,44 +218,31 @@ if __name__ == "__main__":
     dataset = load_dataset(config["dataset"])
     train_corpus = dataset["train"]["text"]
     test_corpus = dataset[config["split"]]["text"]
-    train_embeddings = get_embeddings(train_corpus)
-    test_embeddings = get_embeddings(test_corpus)
-    sim = cosine_similarity(train_embeddings, test_embeddings).T
-    print("similarity matrix shape: ", sim.shape)
     
-    neighbours = random_neighbours(len(train_corpus), len(test_corpus), config["ice_num"])
+    neighbours = random_neighbours(len(train_corpus), config["ice_num"])
     # neighbours = rerank(neighbours, sim)
     # neighbours = perm(neighbours)    
     
     template = "Movie Review:{text}\nSentiment:{verb}"
     label_map = config["label_map"]
     map_label = reverse_dict(label_map)
-    prompts = generate_prompts(template, dataset, neighbours, label_map, config["split"], config["input_column"], config["output_column"])
+    prompts = generate_prompts(template, dataset, neighbours, len(test_corpus), label_map, config["split"], config["input_column"], config["output_column"])
     print(prompts[:5])
     
     # import pickle
     # with open("icl_out.bin", "wb") as f:
     #     pickle.dump(neighbours, f)
-    predictions = inference(config["model"], prompts, batch_size=config["batch_size"])  
+    
+    tokenizer = AutoTokenizer.from_pretrained(config["model"])
+    tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.pad_token_id = tokenizer.eos_token_id
+    tokenizer.padding_side = "left"
+    
+    model = AutoModelForCausalLM.from_pretrained(config["model"]).cuda()
+
+    predictions = inference(model, tokenizer, prompts, batch_size=config["batch_size"])  
     
     pred = list(map(lambda x: map_label[x], predictions))
     test_labels = dataset[config["split"]][config["output_column"]]
     print(evaluate_result(pred, test_labels))
     
-    # print("相似度按我们的来")
-    # neighbours1 = perm(neighbours)
-    # prompts = generate_prompts(template, dataset, neighbours1, label_map, config["split"], config["input_column"], config["output_column"])
-    # predictions = inference(config["model"], prompts)  
-    
-    # pred = list(map(lambda x: map_label[x], predictions))
-    # test_labels = dataset[config["split"]][config["output_column"]]
-    # print(evaluate_result(pred, test_labels))
-    
-    # print("相似度按我们的反着来")
-    # neighbours2 = perm1(neighbours)
-    # prompts = generate_prompts(template, dataset, neighbours2, label_map, config["split"], config["input_column"], config["output_column"])
-    # predictions = inference(config["model"], prompts)  
-    
-    # pred = list(map(lambda x: map_label[x], predictions))
-    # test_labels = dataset[config["split"]][config["output_column"]]
-    # print(evaluate_result(pred, test_labels))

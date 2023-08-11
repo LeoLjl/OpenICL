@@ -1,3 +1,5 @@
+# KNN搜样本作为ice，test sample不共享ice
+
 from sentence_transformers import SentenceTransformer
 from transformers import AutoTokenizer, GPT2Tokenizer, AutoModelForCausalLM, GPT2Model
 import faiss
