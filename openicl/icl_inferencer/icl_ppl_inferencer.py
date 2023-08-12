@@ -175,7 +175,7 @@ class PPLInferencer(BaseInferencer):
         loss_fct = torch.nn.CrossEntropyLoss(reduction='none', ignore_index=self.tokenizer.pad_token_id)
         loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1)).view(
             shift_labels.size())
-
+        
         if mask_length is not None:
             mask = torch.zeros_like(shift_labels)  # [batch,seqlen]
             for i in range(len(mask)):

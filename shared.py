@@ -111,12 +111,29 @@ def inference1(model_name, prompts):
 #     ids = ids[:, permutation]
 #     return ids
 
-def get_ppl(model, neighbours):
-    # get the perplexity of each prompt
-    
-    
-    pass
 
+def get_ppl(model, tokenizer, dataset, neighbours, input_column="text", label_column="label"):
+    # get the perplexity of each prompt
+    prompts = [generate_item(template, dataset["train"], i, label_map, input_column, label_column) for i in neighbours]
+    
+    losses = []
+    for input_texts in prompts:
+        inputs = tokenizer(input_texts, padding=True, return_tensors='pt', truncation=True)
+        inputs = {k: v.cuda() for k, v in inputs.items()}
+        outputs = model(**inputs)
+        
+        shift_logits = outputs.logits[..., :-1, :].contiguous()
+        shift_labels = inputs["input_ids"][..., 1:].contiguous()
+        loss_fct = torch.nn.CrossEntropyLoss(reduction='none', ignore_index=tokenizer.pad_token_id)
+        loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1)).view(
+            shift_labels.size())
+        
+        lens = (inputs["input_ids"] != tokenizer.pad_token_id).sum(-1).cpu().numpy()
+        ce_loss = loss.sum(-1).cpu().detach().numpy() / lens
+        losses.extend(ce_loss.tolist())
+    return losses
+
+@torch.no_grad()
 def inference(model, tokenizer, prompts, batch_size=8):
     device = "cuda"
     
@@ -180,7 +197,7 @@ def perm(ids):
         permutation[i] = counter
     # permutation = np.arange(ice_num)[::-1]
     print("rerank permutation: ", permutation)
-    ids = ids[:, permutation]
+    ids = ids[permutation]
     return ids
 
 
@@ -203,11 +220,17 @@ def perm1(ids):
         permutation[i] = counter
     # permutation = np.arange(ice_num)[::-1]
     print("rerank permutation: ", permutation)
-    ids = ids[:, permutation]
+    ids = ids[permutation]
     return ids
 
 def reverse_dict(d):
     return {v: k for k, v in d.items()}
+
+def rerank(neighbours, ppl):
+    # ppl从低到高排序
+    ids = np.argsort(ppl)
+    neighbours = neighbours[ids]
+    return neighbours
 
 if __name__ == "__main__":
     with open("config.yaml", "r") as f:
@@ -226,8 +249,7 @@ if __name__ == "__main__":
     template = "Movie Review:{text}\nSentiment:{verb}"
     label_map = config["label_map"]
     map_label = reverse_dict(label_map)
-    prompts = generate_prompts(template, dataset, neighbours, len(test_corpus), label_map, config["split"], config["input_column"], config["output_column"])
-    print(prompts[:5])
+    
     
     # import pickle
     # with open("icl_out.bin", "wb") as f:
@@ -239,10 +261,35 @@ if __name__ == "__main__":
     tokenizer.padding_side = "left"
     
     model = AutoModelForCausalLM.from_pretrained(config["model"]).cuda()
-
-    predictions = inference(model, tokenizer, prompts, batch_size=config["batch_size"])  
     
+    ppl = get_ppl(model, tokenizer, dataset, neighbours, config["input_column"], config["output_column"])
+    neighbours = rerank(neighbours, ppl)
+    prompts = generate_prompts(template, dataset, neighbours, len(test_corpus), label_map, config["split"], config["input_column"], config["output_column"])
+    print(prompts[:5])
+    
+    predictions = inference(model, tokenizer, prompts, batch_size=config["batch_size"])  
     pred = list(map(lambda x: map_label[x], predictions))
     test_labels = dataset[config["split"]][config["output_column"]]
-    print(evaluate_result(pred, test_labels))
+    print("ppl从低到高排序：", evaluate_result(pred, test_labels))
     
+    neighbours = neighbours[::-1]
+    prompts = generate_prompts(template, dataset, neighbours, len(test_corpus), label_map, config["split"], config["input_column"], config["output_column"])
+    predictions = inference(model, tokenizer, prompts, batch_size=config["batch_size"])  
+    pred = list(map(lambda x: map_label[x], predictions))
+    test_labels = dataset[config["split"]][config["output_column"]]
+    print("ppl从高到低排序：", evaluate_result(pred, test_labels))
+    
+    neighbours1 = neighbours[::-1]
+    neighbours1 = perm(neighbours1)
+    prompts = generate_prompts(template, dataset, neighbours1, len(test_corpus), label_map, config["split"], config["input_column"], config["output_column"])
+    predictions = inference(model, tokenizer, prompts, batch_size=config["batch_size"])  
+    pred = list(map(lambda x: map_label[x], predictions))
+    test_labels = dataset[config["split"]][config["output_column"]]
+    print("ppl ours：", evaluate_result(pred, test_labels))
+
+    neighbours2 = perm1(neighbours1)
+    prompts = generate_prompts(template, dataset, neighbours2, len(test_corpus), label_map, config["split"], config["input_column"], config["output_column"])
+    predictions = inference(model, tokenizer, prompts, batch_size=config["batch_size"])  
+    pred = list(map(lambda x: map_label[x], predictions))
+    test_labels = dataset[config["split"]][config["output_column"]]
+    print("ppl ours reverse：", evaluate_result(pred, test_labels))
