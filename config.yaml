@@ -1,5 +1,5 @@
-model: "EleutherAI/gpt-j-6B"
-batch_size: 2
+model: "EleutherAI/gpt-neo-2.7B"
+batch_size: 4
 dataset: "gpt3mix/sst2"
 ice_num: 8
 split: "test"

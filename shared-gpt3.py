@@ -89,7 +89,19 @@ def inference1(model_name, prompts):
         outputs.append(s)
     return outputs
 
-openai.Completion.create()
+
+def api_inference(prompts):
+    preds = []
+    
+    for prompt in prompts:
+        response = openai.Completion.create(model="text-curie-001",
+                                    prompt=prompt,
+                                    temperature=0,
+                                    max_tokens=1)
+        message = response["choices"][0]["text"]
+        preds.append(message)
+    return preds
+
 # def rerank(ids):
     
 #     # this reranks the example order
@@ -276,7 +288,7 @@ if __name__ == "__main__":
     
     neighbours = neighbours[::-1]
     prompts = generate_prompts(template, dataset, neighbours, len(test_corpus), label_map, config["split"], config["input_column"], config["output_column"])
-    predictions = inference(model, tokenizer, prompts, batch_size=config["batch_size"])  
+    predictions = api_inference(prompts)  
     pred = list(map(lambda x: map_label[x], predictions))
     test_labels = dataset[config["split"]][config["output_column"]]
     print("ppl从高到低排序：", evaluate_result(pred, test_labels))
